@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.meshplugin
+data.db
+config.json
+.venv/
+.DS_Store

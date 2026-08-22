@@ -1,0 +1,186 @@
+{
+  "id": "ryszardred1/meshpulse-discord-bridge",
+  "name": "Discord Bridge",
+  "version": "1.2.2",
+  "description": "Bidirectional text bridge between your Meshtastic mesh and a Discord channel. Mesh traffic is relayed into Discord; Discord messages are transmitted over the air.",
+  "author": {
+    "name": "Ryszard Redelbach",
+    "github": "ryszardred1"
+  },
+  "license": "GPL-3.0",
+  "compatibility": {
+    "min_mapper_version": "2.3.0",
+    "tested_up_to": "2.6.0"
+  },
+  "permissions": [
+    "database",
+    "mesh_receive",
+    "mesh_send",
+    "websocket_channel"
+  ],
+  "backend": {
+    "entry_point": "backend/main.py",
+    "requirements": "requirements.txt"
+  },
+  "frontend": {
+    "js": "frontend/js/plugin.js",
+    "css": "frontend/css/plugin.css"
+  },
+  "config": {
+    "discord_token": {
+      "type": "string",
+      "default": "",
+      "description": "Bot token from the Discord Developer Portal (Bot -> Reset Token)"
+    },
+    "discord_channel_id": {
+      "type": "string",
+      "default": "",
+      "description": "Target channel ID, digits only. Stored as a string because snowflakes exceed JavaScript's safe integer range"
+    },
+    "mesh_to_discord": {
+      "type": "boolean",
+      "default": true,
+      "description": "Relay mesh messages into Discord"
+    },
+    "discord_to_mesh": {
+      "type": "boolean",
+      "default": true,
+      "description": "Relay Discord messages onto the mesh"
+    },
+    "mesh_channel_index": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 7,
+      "description": "Meshtastic channel index used for transmissions"
+    },
+    "mesh_channel_filter": {
+      "type": "string",
+      "default": "all",
+      "description": "Which mesh channel to listen on: 'all' or a channel index"
+    },
+    "forward_dms": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also relay direct messages addressed to your node"
+    },
+    "name_prefix": {
+      "type": "boolean",
+      "default": true,
+      "description": "Prefix outbound messages with the Discord author's display name"
+    },
+    "dm_target": {
+      "type": "string",
+      "default": "",
+      "description": "Optional node ID (!xxxxxxxx). When set, every Discord message is sent as a direct message to this node instead of a broadcast"
+    },
+    "thread_per_node": {
+      "type": "boolean",
+      "default": true,
+      "description": "Give every mesh node its own Discord thread. Each person gets a private, continuous 1:1 conversation instead of one shared channel"
+    },
+    "thread_scope": {
+      "type": "select",
+      "default": "all",
+      "options": [
+        "all",
+        "dm"
+      ],
+      "description": "Which mesh traffic opens a thread: 'all' = every sender, 'dm' = only direct messages (broadcasts stay in the main channel)"
+    },
+    "thread_archive_hours": {
+      "type": "select",
+      "default": 24,
+      "options": [
+        1,
+        24,
+        72,
+        168
+      ],
+      "description": "Hours of silence before Discord archives a thread. Archived threads are reopened automatically on the next message"
+    },
+    "thread_name_template": {
+      "type": "string",
+      "default": "{name} ({id})",
+      "description": "Thread title. {name} = node name, {id} = node ID"
+    },
+    "pairing_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Let Discord users claim a mesh node by transmitting a one-time code from it"
+    },
+    "pair_code_ttl_minutes": {
+      "type": "number",
+      "default": 15,
+      "description": "How long a pairing code stays valid"
+    },
+    "pair_require_dm": {
+      "type": "boolean",
+      "default": true,
+      "description": "Require the code to arrive as a direct message. On firmware 2.5+ that is encrypted to this node, so the code cannot be stolen off the air. Turn off only for legacy radios"
+    },
+    "greet_new_members": {
+      "type": "boolean",
+      "default": true,
+      "description": "DM a pairing code to anyone who joins the server. Needs the SERVER MEMBERS INTENT in the Discord developer portal"
+    },
+    "paired_role_name": {
+      "type": "string",
+      "default": "",
+      "description": "Optional Discord role granted once a node is paired. Leave empty to skip. The bot needs 'Manage Roles'"
+    },
+    "simulate_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable the 'simulate' command, which injects a fake mesh packet for testing without a second radio. Anyone in the channel can forge traffic while this is on - keep it off in normal use"
+    },
+    "command_prefix": {
+      "type": "string",
+      "default": "!mesh",
+      "description": "Prefix for in-channel administrative commands"
+    },
+    "use_embed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Render inbound mesh messages as embeds instead of plain text"
+    },
+    "allow_bots": {
+      "type": "boolean",
+      "default": false,
+      "description": "Relay messages from other bots and webhooks. Enable with care: it removes a loop guard"
+    },
+    "max_payload": {
+      "type": "number",
+      "default": 200,
+      "min": 40,
+      "max": 228,
+      "description": "Maximum encoded size of a single text packet, in bytes"
+    },
+    "max_chunks": {
+      "type": "number",
+      "default": 4,
+      "min": 1,
+      "max": 10,
+      "description": "Maximum number of packets a single long message may be split into"
+    },
+    "tx_interval": {
+      "type": "number",
+      "default": 3,
+      "min": 0,
+      "max": 60,
+      "description": "Delay between consecutive transmissions, in seconds. Protects the duty cycle"
+    },
+    "echo_ttl": {
+      "type": "number",
+      "default": 180,
+      "min": 10,
+      "max": 900,
+      "description": "Window for detecting the bridge's own messages coming back over the air, in seconds"
+    },
+    "log_to_db": {
+      "type": "boolean",
+      "default": true,
+      "description": "Persist bridged messages to the plugin's SQLite database"
+    }
+  }
+}
