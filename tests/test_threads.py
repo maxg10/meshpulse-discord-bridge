@@ -109,6 +109,19 @@ class FakeChannel:
         return t
 
 
+class FakeSerial:
+    """Records what the bridge actually hands the radio."""
+
+    def __init__(self, sink):
+        self.sink = sink
+        self.fail = None
+
+    def sendText(self, text, channelIndex=0, destinationId="^all"):
+        if self.fail:
+            raise self.fail
+        self.sink.append((text, None if destinationId == "^all" else destinationId))
+
+
 class FakeAuthor:
     def __init__(self, name="Ryszard", bot=False, aid=7):
         self.display_name = name
@@ -330,8 +343,47 @@ async def main():
 
     # 12. transmit really addresses the node
     b6, ch6, _ = make()
+    b6._mapper = types.SimpleNamespace(
+        connection_type="serial", _serial_iface=FakeSerial(b6.sent_mesh))
     await b6._send_to_mesh(mod.Outbound(text="hi", to_id="!aaaa1111", author="R"))
     check("send_mesh_message receives the node id", b6.sent_mesh[0][1] == "!aaaa1111")
+
+    # 13. a dead radio connection must not be counted as a transmission
+    b7, ch7, _ = make()
+    b7._mapper = types.SimpleNamespace(connection_type="serial", _serial_iface=None)
+    raised = False
+    try:
+        await b7._send_to_mesh(mod.Outbound(text="hi", to_id=None, author="R"))
+    except RuntimeError:
+        raised = True
+    check("no transmit route raises instead of silently passing", raised)
+    check("nothing was handed to the mapper", b7.sent_mesh == [])
+    check("the counter was not advanced", b7._stats.discord_to_mesh == 0)
+
+    # 14. a failing radio must surface as an error, not a silent success
+    b8, ch8, _ = make()
+    serial = FakeSerial(b8.sent_mesh)
+    serial.fail = OSError("device reports readiness to read but returned no data")
+    b8._mapper = types.SimpleNamespace(connection_type="serial", _serial_iface=serial)
+    raised = False
+    try:
+        await b8._send_to_mesh(mod.Outbound(text="hi", to_id=None, author="R"))
+    except OSError:
+        raised = True
+    check("a failing radio raises instead of counting a success", raised)
+    check("the counter was not advanced on failure", b8._stats.discord_to_mesh == 0)
+    check("the error is retained for diagnostics",
+          b8._last_tx_error and "OSError" in b8._last_tx_error)
+
+    # 15. host:port is split, as the mapper does for its own sends
+    check("plain host keeps no port", mod.DiscordBridge._split_host("192.168.1.50")
+          == ("192.168.1.50", None))
+    check("host:port is split", mod.DiscordBridge._split_host("192.168.1.50:4403")
+          == ("192.168.1.50", 4403))
+    check("bracketed IPv6 with port is split",
+          mod.DiscordBridge._split_host("[fd00::1]:4403") == ("fd00::1", 4403))
+    check("bare IPv6 is not mistaken for host:port",
+          mod.DiscordBridge._split_host("fd00::1")[0] == "fd00::1")
 
     print()
     failed = [n for n, ok in RESULTS if not ok]

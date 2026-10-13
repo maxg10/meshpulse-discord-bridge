@@ -1,7 +1,7 @@
 {
   "id": "ryszardred1/discord-bridge",
   "name": "Discord Bridge",
-  "version": "1.4.0",
+  "version": "1.0.0",
   "description": "Bidirectional text bridge between your Meshtastic mesh and a Discord channel. Mesh traffic is relayed into Discord; Discord messages are transmitted over the air.",
   "author": {
     "name": "Ryszard Redelbach",
@@ -68,6 +68,11 @@
       "type": "boolean",
       "default": true,
       "description": "Mirror messages composed in the MeshPulse web chat into Discord. MeshPulse transmits those itself and notifies no plugin, so they are detected by watching its message store rather than through a hook"
+    },
+    "echo_to_meshpulse": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show messages relayed from Discord in the MeshPulse chat window too, so one operator with a single radio can see what was transmitted"
     },
     "web_chat_poll_seconds": {
       "type": "number",

@@ -53,8 +53,13 @@ CUSTOM_EMOJI_RE = re.compile(r"<a?:(\w+):\d+>")
 WHITESPACE_RE = re.compile(r"\s+")
 
 RECONNECT_BACKOFF: tuple[int, ...] = (5, 15, 30, 60, 120)
+# Login refusals are more often rate-limiting than a wrong token, so these
+# wait far longer before trying again.
+LOGIN_RETRY_BACKOFF: tuple[int, ...] = (60, 120, 300, 600, 900)
 THREAD_JOIN_TIMEOUT = 15.0
 STARTUP_TIMEOUT = 5.0
+
+PLUGIN_VERSION = "1.0.0"
 
 STATUS_LABELS = {
     "online": "🟢 online",
@@ -189,6 +194,7 @@ class DiscordBridge(MeshPlugin):
         # have to be watched for instead. Touched only on the bridge thread.
         self._web_seen: set[str] = set()
         self._web_primed = False
+        self._last_tx_error: str | None = None
 
         self.register_ws_channel("status")
 
@@ -303,6 +309,7 @@ class DiscordBridge(MeshPlugin):
     async def _supervise(self) -> None:
         """Keep the gateway connection up, backing off on transient failures."""
         attempt = 0
+        rejections = 0
         while not self._stopping:
             token = (self.config.get("discord_token") or "").strip()
             channel_id = self._as_int(self.config.get("discord_channel_id"))
@@ -320,9 +327,27 @@ class DiscordBridge(MeshPlugin):
                 attempt = 0
             except asyncio.CancelledError:
                 raise
-            except discord.LoginFailure:
-                await self._fail("bad_token", "Discord rejected the token.")
-                return
+            except discord.LoginFailure as exc:
+                # Not necessarily a wrong token. Discord also refuses logins it
+                # considers too frequent, and a plugin reinstalled a few times
+                # in an hour hits that easily. Giving up permanently on the
+                # first refusal turned a situation that clears itself in
+                # minutes into one that looks like a dead plugin, so this backs
+                # off hard and keeps trying. A genuinely wrong token simply
+                # repeats the message until someone fixes it in the settings,
+                # which restarts this thread anyway.
+                rejections += 1
+                self._status = "bad_token"
+                await self._push_status()
+                pause = LOGIN_RETRY_BACKOFF[
+                    min(rejections - 1, len(LOGIN_RETRY_BACKOFF) - 1)]
+                self.log(
+                    f"Discord refused the login ({exc}). This is either a wrong "
+                    f"token or too many reconnections in a short time. "
+                    f"Retrying in {pause}s."
+                )
+                await asyncio.sleep(pause)
+                continue
             except discord.PrivilegedIntentsRequired:
                 await self._fail("no_intent",
                                  "Discord refused the login: a privileged intent is "
@@ -1114,12 +1139,171 @@ class DiscordBridge(MeshPlugin):
                 except asyncio.CancelledError:
                     return
 
+    async def _transmit(self, text: str, to_id: str | None, channel: int,
+                        route: str) -> None:
+        """Put one packet on the air, letting failures surface.
+
+        The mapper exposes `send_mesh_message` for this, but it catches every
+        exception from the underlying send, prints it, and returns normally.
+        A plugin calling it therefore cannot tell a delivered packet from one
+        that never left the device — the bridge counted successes for messages
+        that were silently dropped, which is indistinguishable from the radio
+        being out of range and sent us chasing the wrong fault for a long time.
+
+        So the send is done here, against the same interfaces the mapper uses,
+        with the error left to propagate. The mapper's method stays as a
+        fallback for any connection shape not handled below.
+        """
+        dest = to_id if to_id else "^all"
+        mapper = getattr(self, "_mapper", None)
+        loop = asyncio.get_running_loop()
+
+        try:
+            if route == "serial":
+                iface = getattr(mapper, "_serial_iface", None)
+                if iface is None:
+                    raise RuntimeError("the serial interface disappeared mid-send")
+
+                def _send() -> None:
+                    iface.sendText(text, channelIndex=channel, destinationId=dest)
+
+                await asyncio.wait_for(loop.run_in_executor(None, _send), timeout=15)
+
+            elif route == "tcp":
+                host, port = self._split_host(str(getattr(mapper, "host", "") or ""))
+
+                def _send_tcp() -> None:
+                    import meshtastic.tcp_interface
+                    kwargs = {"hostname": host, "noProto": False}
+                    if port is not None:
+                        kwargs["portNumber"] = port
+                    iface = meshtastic.tcp_interface.TCPInterface(**kwargs)
+                    try:
+                        iface.sendText(text, channelIndex=channel, destinationId=dest)
+                    finally:
+                        try:
+                            iface.close()
+                        except Exception:
+                            pass
+
+                await asyncio.wait_for(loop.run_in_executor(None, _send_tcp), timeout=30)
+
+            else:
+                await self.send_mesh_message(text, to_id=to_id, channel=channel)
+
+        except Exception as exc:
+            self._last_tx_error = f"{type(exc).__name__}: {exc}"
+            raise
+
+        self._last_tx_error = None
+
+    @staticmethod
+    def _split_host(raw: str) -> tuple[str, int | None]:
+        """Split 'host:port' the way the mapper does for its own sends.
+
+        The mapper splits it on its own send path but hands plugins the value
+        unsplit, so passing it straight through as a hostname fails whenever a
+        port is configured.
+        """
+        raw = raw.strip()
+        if raw.startswith("["):                      # bracketed IPv6
+            closing = raw.find("]")
+            if closing > 0:
+                host = raw[1:closing]
+                rest = raw[closing + 1:]
+                if rest.startswith(":") and rest[1:].isdigit():
+                    return host, int(rest[1:])
+                return host, None
+        if raw.count(":") == 1:
+            host, _, port = raw.partition(":")
+            if port.isdigit() and 1 <= int(port) <= 65535:
+                return host, int(port)
+        return raw, None
+
+    async def _show_in_meshpulse(self, item: Outbound, channel_index: int) -> None:
+        """Put a transmission into the MeshPulse chat window as well.
+
+        The mapper records what its own chat window sends, but not what it
+        sends on behalf of a plugin — so a message relayed from Discord went
+        out over the air and then vanished from every screen its operator
+        owns. With one radio that is indistinguishable from not transmitting
+        at all, which is exactly how it was reported.
+
+        The entry is shaped like the one the mapper writes for itself, and its
+        fingerprint is marked as seen first: otherwise the web chat watcher
+        would find it, mirror it back to Discord, and close a loop.
+        """
+        if not self.config.get("echo_to_meshpulse", True):
+            return
+
+        mapper = getattr(self, "_mapper", None)
+        store = getattr(mapper, "messages", None)
+        if not isinstance(store, dict):
+            return
+
+        entry = {
+            "from_id": self._own_node_id() or "",
+            "from_name": "Discord",
+            "to_id": item.to_id or "^all",
+            "text": item.text,
+            "timestamp": int(time.time()),
+            "is_dm": bool(item.to_id),
+            "channel_index": channel_index,
+        }
+
+        self._web_seen.add(self._web_key(entry))
+        try:
+            store.setdefault(channel_index, []).insert(0, entry)
+            if len(store[channel_index]) > 50:
+                store[channel_index] = store[channel_index][:50]
+        except Exception as exc:
+            self.log(f"Could not record the transmission in MeshPulse: {exc}")
+            return
+
+        # Live update for anyone with the page open. Best effort: the mapper
+        # runs its own loop, and the message is already in the store either
+        # way, so a failure here only delays it until the page reloads.
+        broadcast = getattr(mapper, "broadcast_message", None)
+        if broadcast is None:
+            return
+        try:
+            await broadcast(entry)
+        except Exception:
+            pass
+
+    def _transmit_path(self) -> str | None:
+        """Which route the mapper would actually transmit on, or None.
+
+        `send_mesh_message` picks between a TCP and a serial branch and, if
+        neither applies, returns having done nothing at all — no exception, no
+        log. Counting that as a successful transmission makes the status report
+        lie about the one thing it exists to confirm, so the route is checked
+        first and a dead one is treated as the failure it is.
+        """
+        mapper = getattr(self, "_mapper", None)
+        if mapper is None:
+            return None
+        if getattr(mapper, "connection_type", None) == "tcp" and getattr(mapper, "host", None):
+            return "tcp"
+        if getattr(mapper, "_serial_iface", None):
+            return "serial"
+        return None
+
     async def _send_to_mesh(self, item: Outbound) -> None:
         channel_index = int(self.config.get("mesh_channel_index", 0) or 0)
-        # to_id=None is translated to '^all' by the manager.
-        await self.send_mesh_message(item.text, to_id=item.to_id, channel=channel_index)
+
+        route = self._transmit_path()
+        if route is None:
+            raise RuntimeError(
+                "the mapper has no usable radio connection right now "
+                "(neither a TCP host nor an open serial interface), so nothing "
+                "would be transmitted. Check the radio connection in MeshPulse."
+            )
+
+        await self._transmit(item.text, item.to_id, channel_index, route)
 
         self._stats.discord_to_mesh += 1
+        await self._show_in_meshpulse(item, channel_index)
         self._store("discord->mesh", item.to_id or "broadcast", item.author, item.text)
         self.log(f"TX -> {item.to_id or '^all'} (ch {channel_index}): {item.text}")
         await self._push_status()
@@ -1144,6 +1328,8 @@ class DiscordBridge(MeshPlugin):
             await self._queue_outbound(message, body.strip(), to_id=target.strip())
         elif command == "here":
             await self._reply(message, f"Channel ID: `{message.channel.id}`")
+        elif command == "diag":
+            await self._reply(message, self._diagnostics(message))
         elif command == "threads":
             await self._reply(message, self._thread_report())
         elif command == "pair":
@@ -1246,6 +1432,7 @@ class DiscordBridge(MeshPlugin):
                 + f"`{prefix} status` — connection state and counters\n"
                 f"`{prefix} nodes` — nodes currently visible\n"
                 f"`{prefix} threads` — open conversations\n"
+                f"`{prefix} diag` — why nothing is being relayed\n"
                 f"`{prefix} pair` — link your Discord account to your radio\n"
                 f"`{prefix} whoami` — show which node you are paired with\n"
                 f"`{prefix} unpair` — drop that link\n"
@@ -1253,6 +1440,55 @@ class DiscordBridge(MeshPlugin):
                 f"`{prefix} dm !abcd1234 text` — one-off direct message\n"
                 f"`{prefix} here` — print this channel's ID",
             )
+
+    def _diagnostics(self, message: Any) -> str:
+        """Everything needed to locate a silent failure, from inside Discord.
+
+        Reading the mapper's log over SSH is not available to everyone running
+        this, and the failures that matter here are quiet: a transmit route
+        that does not exist, a channel ID that does not match, a direction
+        switched off. Each line below answers one of those.
+        """
+        mapper = getattr(self, "_mapper", None)
+        route = self._transmit_path()
+        bridge_id = self._as_int(self.config.get("discord_channel_id"))
+        here = getattr(message.channel, "id", 0)
+        parent = getattr(message.channel, "parent_id", None)
+        matches = here == bridge_id or parent == bridge_id
+
+        if route == "tcp":
+            host = str(getattr(mapper, "host", "") or "")
+            radio = f"TCP → `{host}`"
+            if ":" in host:
+                radio += ("\n   ⚠️ the host carries a port. The mapper's plugin "
+                          "send path passes it unsplit, which can fail while "
+                          "the MeshPulse chat window still works.")
+        elif route == "serial":
+            radio = "serial (USB)"
+        else:
+            radio = ("**none** — neither a TCP host nor an open serial "
+                     "interface. Nothing can be transmitted.")
+
+        return (
+            f"**Diagnostics**\n"
+            f"Plugin: `{PLUGIN_VERSION}` · mapper: "
+            f"`{getattr(mapper, 'connection_type', 'unknown')}`\n"
+            f"Transmit route: {radio}\n"
+            f"Own node: `{self._own_node_id() or 'unknown'}`\n"
+            f"Configured channel: `{bridge_id or 'not set'}` · you are in "
+            f"`{here}` → {'✅ match' if matches else '❌ mismatch, messages here are ignored'}\n"
+            f"Directions: mesh→discord "
+            f"{'on' if self.config.get('mesh_to_discord', True) else '**off**'}"
+            f" · discord→mesh "
+            f"{'on' if self.config.get('discord_to_mesh', True) else '**off**'}"
+            f" · web chat "
+            f"{'on' if self.config.get('relay_web_chat', True) else '**off**'}\n"
+            f"Queued to transmit: {self._tx_queue.qsize()}\n"
+            + (f"Last transmit error: `{self._last_tx_error}`\n"
+               if self._last_tx_error else "")
+            + f"Counters — sent {self._stats.discord_to_mesh}, "
+            + f"received {self._stats.mesh_to_discord}, errors {self._stats.errors}"
+        )
 
     def _thread_report(self) -> str:
         if not self._threads:

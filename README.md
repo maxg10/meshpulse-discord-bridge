@@ -123,9 +123,11 @@ greeting is a far smaller failure than losing the bridge.
 
 ## Installation
 
-**[docs/SETUP.md](docs/SETUP.md) is the full walkthrough** — creating a Discord
-server, a bot, and getting the plugin running, from nothing, in about twenty
-minutes. The summary below assumes you have done this kind of thing before.
+**[docs/GUIDE.md](docs/GUIDE.md) is the full walkthrough** — creating a Discord
+server and bot and getting the plugin running, from nothing, in about twenty
+minutes. Available in Polish and English (🇵🇱 [polski](docs/GUIDE.md#wersja-polska)
+· 🇬🇧 [English](docs/GUIDE.md#english-version)). The summary below assumes you
+have done this kind of thing before.
 
 Requires MeshPulse 2.3.0+ (developed against 2.5.1, verified against 2.6.0) and
 Python 3.9+. `discord.py>=2.4` is installed by the mapper on enable.
@@ -210,15 +212,15 @@ In MeshPulse: **Config → Plugins → Install Plugin**, select the package,
 
 ## Tests
 
-90 integration tests run against the **real** `MeshPlugin` base class, not a
+107 integration tests run against the **real** `MeshPlugin` base class, not a
 stub, with `discord.py` replaced by test doubles. Radio-thread hook dispatch is
 reproduced faithfully, including the throwaway-event-loop behaviour.
 
 ```bash
 git clone https://github.com/maxg10/meshpulse ../meshpulse
-python3 tests/test_threads.py     # 28 tests — thread routing
+python3 tests/test_threads.py     # 38 tests — thread routing
 python3 tests/test_pairing.py     # 33 tests — pairing and its failure modes
-python3 tests/test_webchat.py     # 29 tests — web chat mirroring
+python3 tests/test_webchat.py     # 36 tests — web chat mirroring
 ```
 
 Set `MESHPULSE_PATH` if the checkout lives elsewhere.
@@ -258,7 +260,7 @@ backend/main.py       plugin implementation
 frontend/             status panel rendered on the MeshPulse map
 plugin.json           manifest, configuration schema, compatibility range
 tests/                integration suites
-docs/INSTRUKCJA.md    end-user manual (Polish)
+docs/GUIDE.md         setup and usage guide (Polish and English)
 build.sh              packages the .meshplugin archive
 ```
 

@@ -96,6 +96,10 @@ class FakeMapper:
     def __init__(self, local_node_id=LOCAL):
         self.messages = {}
         self.local_node_id = local_node_id
+        # A live radio connection, as the real mapper would have.
+        self.connection_type = "serial"
+        self.sent_over_radio = []
+        self._serial_iface = _Serial(self.sent_over_radio)
 
     def add(self, text, *, from_id=LOCAL, to_id="^all", channel=0, ts=None,
             is_dm=False, from_name="You"):
@@ -112,6 +116,14 @@ class FakeMapper:
         if len(self.messages[channel]) > 50:
             self.messages[channel] = self.messages[channel][:50]
         return entry
+
+
+class _Serial:
+    def __init__(self, sink):
+        self.sink = sink
+
+    def sendText(self, text, channelIndex=0, destinationId="^all"):
+        self.sink.append((text, destinationId))
 
 
 class Bridge(mod.DiscordBridge):
@@ -218,7 +230,7 @@ async def main():
     await b3._send_to_mesh(mod.Outbound(text="z discorda", to_id=None, author="R"))
     await b3._drain_web_chat()
     check("bridge transmissions never reach the watcher", ch3.sent == [])
-    check("the transmission did happen", len(b3.sent_mesh) == 1)
+    check("the transmission did happen", len(b3._mapper.sent_over_radio) == 1)
 
     # 6. a broadcast goes to the parent channel
     b4, ch4, mapper4 = make()
@@ -324,6 +336,33 @@ async def main():
     b14._mapper.add("osierocona", ts=14000)
     await b14._drain_web_chat()
     check("unknown node id mirrors nothing, without raising", ch14.sent == [])
+
+    # 16b. a Discord transmission appears in the MeshPulse chat too
+    b15, ch15, mapper15 = make()
+    prime(b15)
+    b15._channel = ch15
+    await b15._send_to_mesh(mod.Outbound(text="[R] z discorda", to_id=None, author="R"))
+    rows = mapper15.messages.get(0, [])
+    check("transmission is recorded in the MeshPulse store", len(rows) == 1)
+    check("it is attributed to Discord", rows[0]["from_name"] == "Discord")
+    check("it carries this node's id", rows[0]["from_id"] == LOCAL)
+
+    # ...and must not come straight back through the watcher
+    await b15._drain_web_chat()
+    check("recorded transmission does not loop back to Discord", ch15.sent == [])
+
+    # a DM keeps its recipient
+    await b15._send_to_mesh(mod.Outbound(text="[R] priv", to_id="!aaaa1111", author="R"))
+    rows = mapper15.messages.get(0, [])
+    check("DM records its recipient", rows[0]["to_id"] == "!aaaa1111" and rows[0]["is_dm"])
+    await b15._drain_web_chat()
+    check("DM does not loop back either", ch15.sent == [])
+
+    # switched off
+    b16, ch16, mapper16 = make({"echo_to_meshpulse": False})
+    prime(b16)
+    await b16._send_to_mesh(mod.Outbound(text="cicho", to_id=None, author="R"))
+    check("echo_to_meshpulse=false records nothing", mapper16.messages == {})
 
     # 17. missing or malformed stores are tolerated
     b12, ch12, _ = make()
