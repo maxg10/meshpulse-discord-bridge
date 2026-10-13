@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0]
+
+### Added
+
+- Messages composed in the MeshPulse web chat are mirrored into Discord. They
+  previously reached no hook at all — MeshPulse transmits them itself, and its
+  send path notifies no plugin — so the bridge now watches `mapper.messages`,
+  where that path leaves each message in the same shape a received one has.
+  Direct messages are routed to the recipient's thread, broadcasts to the
+  parent channel.
+- `relay_web_chat`, `web_chat_poll_seconds` and `web_chat_label`.
+
+### Notes
+
+- Mirrored messages bypass the transmit queue: MeshPulse has already put them
+  on the air, and relaying them again would duplicate them for every radio in
+  range.
+- The watcher cannot pick up the bridge's own Discord-to-mesh traffic, because
+  `send_mesh_message` does not write to the store it watches.
+- Everything present at startup is fingerprinted before the first poll, so a
+  restart does not replay the backlog MeshPulse retains.
+
+### Removed
+
+- The corresponding entry from the README's limitations section.
+
 ## [1.2.2]
 
 ### Changed

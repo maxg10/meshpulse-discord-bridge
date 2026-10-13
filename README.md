@@ -32,6 +32,10 @@ transmitting a one-time code from it. The bot issues the code over Discord; the
 radio sends it back over the air. Possession of the hardware is the credential —
 the only thing that cannot be forged from a keyboard.
 
+**The MeshPulse web chat is included.** Messages typed into MeshPulse's own
+chat window are mirrored into Discord too, so a conversation reads the same
+whether it was started from a radio, from Discord, or from the mapper's web UI.
+
 **Operational commands.** Status, node list, open conversations, ad-hoc direct
 messages, pairing, and a packet injector for testing without a second radio.
 
@@ -79,6 +83,23 @@ public key, so a code sent as a DM cannot be lifted off the air by a bystander
 and redeemed first. Codes broadcast in the clear are refused with an
 explanatory reply rather than silently accepted. The code alphabet omits
 `0 O 1 I L`, because codes get retyped from small radio displays.
+
+### Watching a list because there is no hook to subscribe to
+
+Messages composed in the MeshPulse web chat are transmitted by MeshPulse
+itself, and its send path notifies no plugin: `on_message` fires only for
+packets arriving from the radio, and `on_ws_message` only for a plugin's own
+WebSocket channels. The send path does, however, insert the message into
+`mapper.messages` in the same shape a received message has, so the bridge
+watches that store on an interval instead.
+
+Two properties make this safe rather than merely expedient. `send_mesh_message`
+— how this bridge transmits — does not write to that store, so the bridge's own
+Discord-to-mesh traffic can never be picked up and echoed back. And mirrored
+messages bypass the transmit queue entirely, because MeshPulse has already put
+them on the air; relaying them again would duplicate them for every radio in
+range. The watcher also records a fingerprint of everything present at startup,
+so a restart does not replay the backlog MeshPulse keeps.
 
 ### Configuration is swapped in place
 
@@ -139,6 +160,9 @@ In MeshPulse: **Config → Plugins → Install Plugin**, select the package,
 | `mesh_channel_index` | `0` | Meshtastic channel used for transmissions |
 | `mesh_channel_filter` | `all` | listen on `all` channels or one index |
 | `forward_dms` | `true` | relay direct messages addressed to this node |
+| `relay_web_chat` | `true` | mirror messages composed in the MeshPulse web chat |
+| `web_chat_poll_seconds` | `2` | how often the message store is checked |
+| `web_chat_label` | `MeshPulse` | name shown in Discord for those messages |
 | `dm_target` | — | when set, parent-channel messages become DMs to this node |
 | `name_prefix` | `true` | prefix outbound text with `[name]` |
 | `thread_per_node` | `true` | one Discord thread per mesh node |
@@ -178,7 +202,7 @@ In MeshPulse: **Config → Plugins → Install Plugin**, select the package,
 
 ## Tests
 
-55 integration tests run against the **real** `MeshPlugin` base class, not a
+81 integration tests run against the **real** `MeshPlugin` base class, not a
 stub, with `discord.py` replaced by test doubles. Radio-thread hook dispatch is
 reproduced faithfully, including the throwaway-event-loop behaviour.
 
@@ -186,6 +210,7 @@ reproduced faithfully, including the throwaway-event-loop behaviour.
 git clone https://github.com/maxg10/meshpulse ../meshpulse
 python3 tests/test_threads.py     # 22 tests — thread routing
 python3 tests/test_pairing.py     # 33 tests — pairing and its failure modes
+python3 tests/test_webchat.py     # 26 tests — web chat mirroring
 ```
 
 Set `MESHPULSE_PATH` if the checkout lives elsewhere.
@@ -195,7 +220,10 @@ suppression with genuine-repeat pass-through, local-node rejection, byte-exact
 UTF-8 splitting, thread creation and reuse, archived-thread reopening,
 persistence across restart, permission-denied fallback, single-use and expiring
 codes, rebinding on both sides of the relation, refusal of codes sent in the
-clear, and clean shutdown with no orphaned threads.
+clear, and clean shutdown with no orphaned threads. The web-chat watcher is
+covered for the two ways it could duplicate traffic — replaying the startup
+backlog and picking up the bridge's own transmissions — as well as eviction
+past the store's item cap and a mapper replaced on reconnect.
 
 ---
 
@@ -210,9 +238,6 @@ These follow from radio physics and cryptography, not from this code.
 - **A central bridge cannot mirror other people's private conversations.**
   Firmware 2.5+ encrypts direct messages to the recipient's key; this node
   relays such packets without being able to read them.
-- **Messages composed in the MeshPulse web chat do not reach Discord.**
-  MeshPulse's send path does not notify plugins, so the bridge never sees them.
-  The reverse direction is unaffected.
 - **MeshPulse has no authentication** and assumes a trusted LAN. Do not expose
   it to the internet.
 

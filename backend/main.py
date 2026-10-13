@@ -185,6 +185,11 @@ class DiscordBridge(MeshPlugin):
         self._pair_by_discord: dict[int, str] = {}
         self._pair_by_node: dict[str, int] = {}
 
+        # Messages composed in the MeshPulse web chat, which reach no hook and
+        # have to be watched for instead. Touched only on the bridge thread.
+        self._web_seen: set[str] = set()
+        self._web_primed = False
+
         self.register_ws_channel("status")
 
         self._thread = threading.Thread(
@@ -279,6 +284,7 @@ class DiscordBridge(MeshPlugin):
         workers = [
             asyncio.create_task(self._rx_worker()),
             asyncio.create_task(self._tx_worker()),
+            asyncio.create_task(self._web_chat_worker()),
         ]
         try:
             await self._supervise()
@@ -505,6 +511,121 @@ class DiscordBridge(MeshPlugin):
             except Exception as exc:
                 self._stats.errors += 1
                 self.log(f"Failed to publish to Discord: {exc}")
+
+    # --- messages composed in the MeshPulse web chat ------------------------
+    # MeshPulse transmits those itself and never notifies plugins, so there is
+    # no hook to subscribe to: `on_message` fires only for packets arriving
+    # from the radio, and `on_ws_message` only for a plugin's own WS channels.
+    # What the send path does leave behind is an entry in `mapper.messages`,
+    # shaped exactly like a received message. Watching that list is the only
+    # way to see those messages, and it is safe to watch: `send_mesh_message`,
+    # which is how this bridge transmits, does not write there — so the
+    # bridge's own Discord-to-mesh traffic can never come back through here.
+
+    async def _web_chat_worker(self) -> None:
+        interval = max(1.0, float(self._as_int(
+            self.config.get("web_chat_poll_seconds", 2)) or 2))
+        # Everything already in the list at startup is history, not news.
+        # Without this the first poll would replay up to 50 past messages
+        # into Discord on every restart.
+        self._web_seen = self._web_fingerprints()
+        self._web_primed = True
+
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                if not self.config.get("relay_web_chat", True):
+                    continue
+                await self._drain_web_chat()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self._stats.errors += 1
+                self.log(f"Web chat watcher failed: {exc}")
+
+    def _local_messages(self) -> list[dict]:
+        """Snapshot of locally-composed messages, oldest first.
+
+        The list is mutated from other threads, so each channel is copied
+        before being read. MeshPulse caps each channel at 50 entries and
+        inserts newest-first.
+        """
+        mapper = getattr(self, "_mapper", None)
+        store = getattr(mapper, "messages", None)
+        if not isinstance(store, dict):
+            return []
+
+        local = str(self._local_node_id or "")
+        found: list[dict] = []
+        for entries in list(store.values()):
+            for item in list(entries):
+                if not isinstance(item, dict):
+                    continue
+                if local and str(item.get("from_id") or "") == local:
+                    found.append(item)
+        found.reverse()
+        return found
+
+    @staticmethod
+    def _web_key(message: dict) -> str:
+        return "|".join(str(message.get(field, "")) for field in
+                        ("timestamp", "channel_index", "to_id", "text"))
+
+    def _web_fingerprints(self) -> set[str]:
+        return {self._web_key(m) for m in self._local_messages()}
+
+    async def _drain_web_chat(self) -> None:
+        if not self._web_primed:
+            return
+
+        current = self._local_messages()
+        fresh = [m for m in current if self._web_key(m) not in self._web_seen]
+        if not fresh:
+            return
+
+        # Rebuild rather than accumulate: entries MeshPulse has evicted past
+        # its 50-item cap can never reappear, so remembering them forever
+        # would grow without bound.
+        self._web_seen = {self._web_key(m) for m in current}
+
+        label = str(self.config.get("web_chat_label", "MeshPulse") or "MeshPulse")
+        for message in fresh:
+            await self._publish_web_message(message, label)
+
+    async def _publish_web_message(self, message: dict, label: str) -> None:
+        """Mirror one locally-composed message into Discord.
+
+        Deliberately bypasses the transmit queue: MeshPulse already put this
+        on the air. Relaying it again would duplicate it for every radio in
+        range.
+        """
+        channel = self._channel
+        if channel is None:
+            return
+
+        text = (message.get("text") or "").strip()
+        if not text:
+            return
+
+        to_id = str(message.get("to_id") or "")
+        is_dm = bool(message.get("is_dm")) or (to_id and not to_id.startswith("^"))
+
+        destination = channel
+        if is_dm and to_id and self.config.get("thread_per_node", True):
+            destination = await self._thread_for(to_id, to_id) or channel
+
+        target = f" → `{to_id}`" if is_dm and to_id else ""
+        body = discord.utils.escape_markdown(text)
+        try:
+            await destination.send(f"🖥️ **{label}**{target}: {body}")
+        except Exception as exc:
+            self._stats.errors += 1
+            self.log(f"Could not mirror a web chat message: {exc}")
+            return
+
+        self._stats.mesh_to_discord += 1
+        self._store("web->discord", to_id, label, text)
+        await self._push_status()
 
     async def _publish_to_discord(self, message: dict) -> None:
         channel = self._channel

@@ -4,7 +4,7 @@ Wtyczka do MeshPulse. Łączy siatkę radiową Meshtastic z kanałem na Discordz
 żeby dwie osoby mogły rozmawiać normalnie — jedna przez radio, druga przez
 przeglądarkę — i żadna nie musiała uczyć się narzędzia tej drugiej.
 
-Wersja 1.2.2 · wymaga MeshPulse 2.3.0 lub nowszego
+Wersja 1.3.0 · wymaga MeshPulse 2.3.0 lub nowszego
 
 ---
 
@@ -192,11 +192,21 @@ Wiadomości z radia trafiają do wątku nadawcy. Format:
 Kłódka 🔒 przy nazwie oznacza, że to była wiadomość prywatna do Twojego węzła,
 a nie rozgłoszenie na kanał.
 
+### Pisanie z okna MeshPulse
+
+Możesz też pisać bezpośrednio w zakładce Messages na stronie MeshPulse — taka
+wiadomość pojawi się na Discordzie oznaczona 🖥️ i nazwą `MeshPulse`. Prywatna
+trafi do wątku odbiorcy, rozgłoszeniowa do kanału głównego.
+
+Wiadomość leci w eter raz: MeshPulse ją już nadał, mostek tylko pokazuje ją na
+Discordzie. Nic nie jest nadawane po raz drugi.
+
 ### Znaczniki
 
 | Symbol | Znaczenie |
 |---|---|
 | 📡 | bot przyjął Twoją wiadomość i nadał ją |
+| 🖥️ | wiadomość napisana w oknie czatu MeshPulse |
 | 🔒 | przychodząca wiadomość była prywatna |
 | ✂️ | wiadomość była za długa i poszła w kawałkach |
 
@@ -279,6 +289,9 @@ Przedrostek `!mesh` można zmienić ustawieniem `command_prefix`.
 | `mesh_channel_index` | `0` | na którym kanale Meshtastic nadawać |
 | `mesh_channel_filter` | `all` | którego kanału słuchać: `all` albo numer |
 | `forward_dms` | ✅ | przekazuj też wiadomości prywatne do Twojego węzła |
+| `relay_web_chat` | ✅ | pokazuj na Discordzie wiadomości pisane w oknie czatu MeshPulse |
+| `web_chat_poll_seconds` | `2` | co ile sekund sprawdzać, czy coś tam napisano |
+| `web_chat_label` | `MeshPulse` | nazwa nadawcy dla tych wiadomości |
 | `dm_target` | puste | numer węzła — wtedy **główny kanał** też pisze prywatnie tylko do niego |
 | `name_prefix` | ✅ | dopisuj `[Nazwa]` przed treścią |
 
@@ -446,11 +459,6 @@ steruje Twoim radiem. Nie wystawiaj tego na internet.
 ---
 
 ## 12. Czego jeszcze nie ma
-
-**Czat z okna MeshPulse nie wychodzi na Discord.**
-Kiedy piszesz w zakładce Messages na stronie MeshPulse, wtyczka tego nie widzi —
-ścieżka wysyłki w MeshPulse nie powiadamia wtyczek. Wiadomość poleci w eter
-normalnie, ale na Discordzie się nie pojawi. W drugą stronę wszystko działa.
 
 **Kanały dla par osób.**
 Zamysł: dwie sparowane osoby dostają rolę i prywatny kanał widoczny tylko dla
