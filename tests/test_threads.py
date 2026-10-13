@@ -289,7 +289,32 @@ async def main():
     )
     check("scope=dm: direct message opens a thread", len(ch4.created) == 1)
 
-    # 11. thread creation failure falls back to the channel
+    # 11a. with auto-threading off, traffic stays in the one channel
+    b11, ch11, _ = make({"thread_per_node": False})
+    await b11._publish_to_discord(
+        {"from_id": "!ffff6666", "from_name": "Solo", "text": "do kanalu", "channel_index": 0}
+    )
+    check("auto-threading off keeps traffic in the channel",
+          ch11.created == [] and len(ch11.sent) == 1)
+
+    # 11b. ...but a thread opened by hand still receives that node's replies
+    opened = await b11._thread_for("!ffff6666", "Solo")
+    check("open command works with auto-threading off", opened is not None)
+    await b11._publish_to_discord(
+        {"from_id": "!ffff6666", "from_name": "Solo", "text": "do watku", "channel_index": 0}
+    )
+    check("existing thread wins over the setting",
+          any("do watku" in str(m) for m in opened.sent))
+    check("channel did not get a second copy", len(ch11.sent) == 1)
+
+    # 11c. other nodes are unaffected by that one thread
+    await b11._publish_to_discord(
+        {"from_id": "!eeee7777", "from_name": "Inny", "text": "nadal kanal", "channel_index": 0}
+    )
+    check("other nodes still land in the channel", len(ch11.sent) == 2)
+    check("no thread opened for them", len(ch11.created) == 1)
+
+    # 12. thread creation failure falls back to the channel
     b5, ch5, _ = make()
 
     async def boom(*a, **kw):

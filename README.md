@@ -22,10 +22,14 @@ means it works on nRF52 hardware, where the MQTT/JSON path is unavailable.
 **Bidirectional relay.** Mesh traffic appears in Discord; Discord messages are
 transmitted over the air, tagged with the sender's name.
 
-**One thread per node.** The first time a node transmits, the plugin opens a
-Discord thread named after it. Every later message from that node lands in the
-same thread, and anything written inside the thread is transmitted as a direct
-message to that node alone. The parent channel stays broadcast.
+**One channel, by default.** Everything the radio hears arrives in a single
+Discord channel, and anything written there is transmitted to the mesh. That is
+what one operator watching their own mesh from a phone actually wants.
+
+**Threads when you ask for them.** `!mesh open !abcd1234` gives a node a thread
+of its own: messages written there go to that node alone, and its replies
+arrive there instead of in the main channel. Set `thread_per_node` to open one
+for every node automatically — worth it when several people share the mesh.
 
 **Proof-of-possession pairing.** A Discord account claims a mesh node by
 transmitting a one-time code from it. The bot issues the code over Discord; the
@@ -119,6 +123,10 @@ greeting is a far smaller failure than losing the bridge.
 
 ## Installation
 
+**[docs/SETUP.md](docs/SETUP.md) is the full walkthrough** — creating a Discord
+server, a bot, and getting the plugin running, from nothing, in about twenty
+minutes. The summary below assumes you have done this kind of thing before.
+
 Requires MeshPulse 2.3.0+ (developed against 2.5.1, verified against 2.6.0) and
 Python 3.9+. `discord.py>=2.4` is installed by the mapper on enable.
 
@@ -165,7 +173,7 @@ In MeshPulse: **Config → Plugins → Install Plugin**, select the package,
 | `web_chat_label` | `MeshPulse` | name shown in Discord for those messages |
 | `dm_target` | — | when set, parent-channel messages become DMs to this node |
 | `name_prefix` | `true` | prefix outbound text with `[name]` |
-| `thread_per_node` | `true` | one Discord thread per mesh node |
+| `thread_per_node` | `false` | open a thread per node automatically; threads opened with `open` work either way |
 | `thread_scope` | `all` | `all` senders, or `dm` only |
 | `thread_archive_hours` | `24` | silence before Discord archives a thread |
 | `thread_name_template` | `{name} ({id})` | thread title |
@@ -202,15 +210,15 @@ In MeshPulse: **Config → Plugins → Install Plugin**, select the package,
 
 ## Tests
 
-81 integration tests run against the **real** `MeshPlugin` base class, not a
+90 integration tests run against the **real** `MeshPlugin` base class, not a
 stub, with `discord.py` replaced by test doubles. Radio-thread hook dispatch is
 reproduced faithfully, including the throwaway-event-loop behaviour.
 
 ```bash
 git clone https://github.com/maxg10/meshpulse ../meshpulse
-python3 tests/test_threads.py     # 22 tests — thread routing
+python3 tests/test_threads.py     # 28 tests — thread routing
 python3 tests/test_pairing.py     # 33 tests — pairing and its failure modes
-python3 tests/test_webchat.py     # 26 tests — web chat mirroring
+python3 tests/test_webchat.py     # 29 tests — web chat mirroring
 ```
 
 Set `MESHPULSE_PATH` if the checkout lives elsewhere.

@@ -4,7 +4,7 @@ Wtyczka do MeshPulse. Łączy siatkę radiową Meshtastic z kanałem na Discordz
 żeby dwie osoby mogły rozmawiać normalnie — jedna przez radio, druga przez
 przeglądarkę — i żadna nie musiała uczyć się narzędzia tej drugiej.
 
-Wersja 1.3.0 · wymaga MeshPulse 2.3.0 lub nowszego
+Wersja 1.4.0 · wymaga MeshPulse 2.3.0 lub nowszego
 
 ---
 
@@ -48,10 +48,21 @@ Ty na Discordzie widzisz:
 
 Nikt niczego nie przełącza. Piszesz jak do znajomego, on odpowiada z krótkofalówki.
 
-### Osobna rozmowa dla każdej osoby
+### Jeden kanał, wątki na żądanie
 
-Domyślnie kanał na Discordzie działa jak poczekalnia, a **każde radio dostaje
-własny wątek**:
+Domyślnie **wszystko trafia do jednego kanału** — tak, jak chce tego ktoś, kto
+podgląda własną siatkę z telefonu:
+
+```
+📡 Kuba !a1b2c3d4: schodze ze szczytu
+📡 Ola  !b2c3d4e5: jestem na miejscu
+```
+
+Chcesz z kimś osobno — zakładasz mu wątek komendą `!mesh open !a1b2c3d4`. Od tej
+chwili piszesz tam tylko do niego, a jego odpowiedzi też lądują w tym wątku.
+
+Jeśli wolisz, żeby każdy węzeł dostawał wątek automatycznie, włącz
+`thread_per_node`. Ma to sens, gdy na siatce jest kilka osób:
 
 ```
 #mesh-bridge              ← tu piszesz do całej siatki
@@ -299,7 +310,7 @@ Przedrostek `!mesh` można zmienić ustawieniem `command_prefix`.
 
 | Pole | Domyślnie | Znaczenie |
 |---|---|---|
-| `thread_per_node` | ✅ | osobny wątek dla każdego węzła |
+| `thread_per_node` | ❌ | automatyczny wątek dla każdego węzła. Domyślnie wyłączone — wątki zakładasz sam komendą `open` |
 | `thread_scope` | `all` | `all` = każdy nadawca, `dm` = tylko prywatne (rozgłoszenia zostają w kanale) |
 | `thread_archive_hours` | `24` | po ilu godzinach ciszy Discord chowa wątek (odkopywany sam) |
 | `thread_name_template` | `{name} ({id})` | tytuł wątku |

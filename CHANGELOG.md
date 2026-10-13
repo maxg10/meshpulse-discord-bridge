@@ -4,6 +4,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0]
+
+### Changed
+
+- `thread_per_node` now defaults to **off**. Mesh traffic arrives in one
+  channel, which is what a single operator watching their own mesh from a phone
+  wants; a thread per node suited a shared mesh and was noise everywhere else.
+- A thread that already exists always receives that node's messages, whatever
+  the setting says. Opening one with `open` is a statement that the
+  conversation belongs there, and replies arriving in the main channel instead
+  would split it in half.
+- Help and status text describe whichever mode is active.
+
+### Added
+
+- `docs/SETUP.md`: a walkthrough from nothing to a working bridge — creating a
+  Discord server and bot, permissions, channel ID, installing the plugin,
+  verifying it, and the failure modes worth recognising. The project is meant
+  to be cloned and run by anyone with a radio, so the guide is part of it.
+
+## [1.3.1]
+
+### Fixed
+
+- The web chat mirror never fired. `_local_node_id` was populated only by the
+  `on_connect` hook, which fires when the radio connects — but a plugin is
+  normally enabled while MeshPulse is already running and connected, so for
+  that lifetime the hook never fired and the field stayed empty. The watcher
+  filters on it, so it matched nothing and silently mirrored nothing. The id is
+  now resolved from the mapper, which is where MeshPulse takes it from when
+  stamping messages, with the tracker info as a further fallback.
+- The same empty field had also disabled the local-node echo guard on the
+  receive path, leaving the content fingerprint as the only protection against
+  relaying our own transmissions back to Discord.
+
 ## [1.3.0]
 
 ### Added

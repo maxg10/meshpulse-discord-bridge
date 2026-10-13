@@ -462,7 +462,11 @@ class DiscordBridge(MeshPlugin):
         from_id = message.get("from_id")
 
         # Packets originating from our own node are our own transmissions.
-        if from_id and self._local_node_id and str(from_id) == str(self._local_node_id):
+        # Resolved through _own_node_id(), since on_connect may never fire for
+        # a plugin enabled while the radio is already connected — which left
+        # this guard disabled and relying on the fingerprint alone.
+        own = self._own_node_id()
+        if from_id and own and str(from_id) == str(own):
             self._stats.dropped_echo += 1
             return
 
@@ -522,6 +526,33 @@ class DiscordBridge(MeshPlugin):
     # which is how this bridge transmits, does not write there — so the
     # bridge's own Discord-to-mesh traffic can never come back through here.
 
+    def _own_node_id(self) -> str | None:
+        """This node's id, without waiting for a connection event.
+
+        `on_connect` only fires when the radio connects, and a plugin is
+        normally enabled while MeshPulse is already running and connected — so
+        the hook may never fire for the lifetime of the plugin. Anything that
+        relied solely on it was silently inert. The mapper holds the same value
+        and is authoritative: it is what MeshPulse itself stamps on messages.
+        """
+        if self._local_node_id:
+            return self._local_node_id
+
+        mapper = getattr(self, "_mapper", None)
+        node_id = getattr(mapper, "local_node_id", None)
+        if node_id:
+            self._local_node_id = str(node_id)
+            return self._local_node_id
+
+        try:
+            tracker = self.get_tracker_info() or {}
+        except Exception:
+            return None
+        node_id = tracker.get("id")
+        if node_id:
+            self._local_node_id = str(node_id)
+        return self._local_node_id
+
     async def _web_chat_worker(self) -> None:
         interval = max(1.0, float(self._as_int(
             self.config.get("web_chat_poll_seconds", 2)) or 2))
@@ -555,7 +586,7 @@ class DiscordBridge(MeshPlugin):
         if not isinstance(store, dict):
             return []
 
-        local = str(self._local_node_id or "")
+        local = str(self._own_node_id() or "")
         found: list[dict] = []
         for entries in list(store.values()):
             for item in list(entries):
@@ -611,7 +642,7 @@ class DiscordBridge(MeshPlugin):
         is_dm = bool(message.get("is_dm")) or (to_id and not to_id.startswith("^"))
 
         destination = channel
-        if is_dm and to_id and self.config.get("thread_per_node", True):
+        if is_dm and to_id and self._threading_wanted({"from_id": to_id, "is_dm": True}):
             destination = await self._thread_for(to_id, to_id) or channel
 
         target = f" → `{to_id}`" if is_dm and to_id else ""
@@ -663,7 +694,18 @@ class DiscordBridge(MeshPlugin):
     # --- per-node threads --------------------------------------------------
 
     def _threading_wanted(self, message: dict) -> bool:
-        if not self.config.get("thread_per_node", True):
+        """Whether this message belongs in a thread rather than the channel.
+
+        A thread that already exists always wins, whatever the setting says:
+        opening one with the `open` command is a statement that this node's
+        conversation belongs there, and its replies arriving in the main
+        channel instead would split that conversation in half. The setting
+        only decides whether threads are opened *automatically*.
+        """
+        node_id = str(message.get("from_id") or "")
+        if node_id and node_id in self._threads:
+            return True
+        if not self.config.get("thread_per_node", False):
             return False
         scope = str(self.config.get("thread_scope", "all")).strip().lower()
         if scope == "dm":
@@ -1191,14 +1233,16 @@ class DiscordBridge(MeshPlugin):
                 f"Opened {thread.mention}" if thread else "Could not open that thread.",
             )
         else:
-            threaded = self.config.get("thread_per_node", True)
+            threaded = self.config.get("thread_per_node", False)
             await self._reply(
                 message,
                 "**Mesh ↔ Discord bridge**\n"
                 + ("Each node gets its own thread; write in a thread to reply to "
                    "that person only. Messages here go to the whole mesh.\n"
                    if threaded else
-                   "Any ordinary message in this channel is transmitted to the mesh.\n")
+                   "Mesh traffic arrives in this channel, and anything you write "
+                   "here goes out to the mesh. Use `open` to give one node a "
+                   "thread of its own.\n")
                 + f"`{prefix} status` — connection state and counters\n"
                 f"`{prefix} nodes` — nodes currently visible\n"
                 f"`{prefix} threads` — open conversations\n"
@@ -1237,7 +1281,7 @@ class DiscordBridge(MeshPlugin):
             f"Dropped — echo: {self._stats.dropped_echo}, "
             f"filtered: {self._stats.dropped_filter}, errors: {self._stats.errors}\n"
             f"Conversations: **{len(self._threads)}** "
-            f"({'threaded' if self.config.get('thread_per_node', True) else 'single channel'})\n"
+            f"({'auto-threaded' if self.config.get('thread_per_node', False) else 'on demand'})\n"
             f"Paired accounts: **{len(self._pair_by_discord)}**\n"
             f"Uptime: {hours}h {minutes}m {seconds}s"
         )

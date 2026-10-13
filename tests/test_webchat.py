@@ -93,8 +93,9 @@ class FakeChannel:
 class FakeMapper:
     """Stands in for the MeshPulse mapper, newest-first and capped at 50."""
 
-    def __init__(self):
+    def __init__(self, local_node_id=LOCAL):
         self.messages = {}
+        self.local_node_id = local_node_id
 
     def add(self, text, *, from_id=LOCAL, to_id="^all", channel=0, ts=None,
             is_dm=False, from_name="You"):
@@ -304,7 +305,27 @@ async def main():
     await b11._drain_web_chat()
     check("replaced mapper replays nothing", ch11.sent == [])
 
-    # 15. missing or malformed stores are tolerated
+    # 15. the node id is resolved without on_connect ever firing
+    b13, ch13, mapper13 = make()
+    b13._local_node_id = None          # on_connect never fired
+    prime(b13)
+    mapper13.add("po wlaczeniu wtyczki", ts=13000)
+    await b13._drain_web_chat()
+    check("node id resolved from the mapper, not from on_connect",
+          len(ch13.sent) == 1)
+    check("resolved id is cached", b13._local_node_id == LOCAL)
+
+    # 16. with no id available anywhere, nothing is mirrored and nothing raises
+    b14, ch14, mapper14 = make()
+    b14._local_node_id = None
+    b14._mapper = FakeMapper(local_node_id=None)
+    b14.get_tracker_info = lambda: {}
+    prime(b14)
+    b14._mapper.add("osierocona", ts=14000)
+    await b14._drain_web_chat()
+    check("unknown node id mirrors nothing, without raising", ch14.sent == [])
+
+    # 17. missing or malformed stores are tolerated
     b12, ch12, _ = make()
     prime(b12)
     b12._mapper = types.SimpleNamespace()
