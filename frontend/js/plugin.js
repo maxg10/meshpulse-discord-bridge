@@ -45,7 +45,14 @@ var DiscordBridgePlugin = (function () {
             '</div>';
 
         this.root = root;
-        api.map.addControl("dbr-status", root, "bottomleft");
+        // MeshPulse 2.6.1+ hosts plugin panels itself: on the desktop they share
+        // one column and (from 2.8.0) get a drag grip, on phones they move into
+        // the Map Layers drawer. Older cores only have plain Leaflet controls.
+        if (api.panels && api.panels.register) {
+            api.panels.register(root);
+        } else {
+            api.map.addControl("dbr-status", root, "bottomleft");
+        }
 
         var self = this;
         api.ws.subscribe("status", function (payload) {
@@ -88,7 +95,11 @@ var DiscordBridgePlugin = (function () {
 
     Plugin.prototype.onDisable = function (api) {
         api.ws.unsubscribe("status");
-        api.map.removeControl("dbr-status");
+        if (api.panels && api.panels.unregister && this.root) {
+            api.panels.unregister(this.root);
+        } else {
+            api.map.removeControl("dbr-status");
+        }
         this.root = null;
         this.lastStatus = null;
     };
